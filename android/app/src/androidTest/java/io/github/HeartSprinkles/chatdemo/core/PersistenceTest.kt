@@ -42,6 +42,23 @@ class PersistenceTest {
             assertTrue(db.dao().summaries().isEmpty());assertTrue(db.dao().messages("a").isEmpty())
         } finally {db.close()}
     }
+    @Test fun datastoreInstancesShareFileAndSurviveOwnerClosing() = runBlocking {
+        val base=ApplicationProvider.getApplicationContext<Context>()
+        val directory=java.io.File(base.noBackupFilesDir,"core-preferences-test-${java.util.UUID.randomUUID()}").apply {mkdirs()}
+        val context=object:android.content.ContextWrapper(base) {override fun getNoBackupFilesDir():java.io.File=directory}
+        val first=CorePreferences(context)
+        val second=CorePreferences(context)
+        first.save(Settings(model="deepseek-v4-pro",thinking=true,locale="zh",theme="dark"))
+        first.draft("unsent draft")
+        assertEquals("unsent draft",second.load().second)
+        first.close()
+        second.draft("new draft")
+        val reopened=CorePreferences(context)
+        val loaded=reopened.load()
+        assertEquals("deepseek-v4-pro",loaded.first.model);assertTrue(loaded.first.thinking)
+        assertEquals("dark",loaded.first.theme);assertEquals("new draft",loaded.second)
+        second.close();reopened.close()
+    }
     @Test fun secureKeyEncryptsRoundTripsAndClearsWithoutPlaintextBackup() {
         val base=ApplicationProvider.getApplicationContext<Context>()
         val directory=java.io.File(base.noBackupFilesDir,"core-key-test-${java.util.UUID.randomUUID()}").apply {mkdirs()}

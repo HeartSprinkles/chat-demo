@@ -28,6 +28,7 @@ class ChatEngine(context:Context) {
     private var call:Call?=null
     private var key=""
     private var selectEpoch=0L
+    private var historyEpoch=0L
     private var closed=false
     init { scope.launch {
         try {
@@ -111,9 +112,21 @@ class ChatEngine(context:Context) {
         }
     } }
     fun rename(id:String,title:String) { command {
+        if(id in deleting || state.value.conversations.none {it.id==id}) return@command
         val c=cache[id]
         if(c!=null) change(id,immediate=true) {it.copy(title=title,manualTitle=true)}
-        else scope.launch {try {val loaded=withContext(Dispatchers.IO) {dao.load(id)} ?: return@launch;publish(loaded.copy(title=title,manualTitle=true));persist(cache.getValue(id),true)} catch(e:Exception){mutable.value=state.value.copy(error=e.message)} }
+        else {
+            val epoch=historyEpoch
+            scope.launch {
+                try {
+                    val loaded=withContext(Dispatchers.IO) {dao.load(id)} ?: return@launch
+                    if(closed || epoch!=historyEpoch || id in deleting || state.value.conversations.none {it.id==id}) return@launch
+                    val renamed=(cache[id] ?: loaded).copy(title=title,manualTitle=true)
+                    publish(renamed);persist(renamed,true)
+                } catch(e:CancellationException) {throw e}
+                catch(e:Exception) {if(epoch==historyEpoch && id !in deleting) mutable.value=state.value.copy(error=e.message)}
+            }
+        }
     } }
     fun delete(id:String) { command {
         deleting.add(id)
@@ -132,6 +145,7 @@ class ChatEngine(context:Context) {
         }
     } }
     fun clearAll() { command {
+        historyEpoch++
         val ids=state.value.conversations.map {it.id}.toSet();deleting.addAll(ids);mutable.value=state.value.copy(isLoading=true);call?.cancel();pending.values.forEach {it.cancel()};pending.clear();latestSaves.clear();selectEpoch++
         scope.launch {
             try {withContext(Dispatchers.IO) {saveMutex.withLock {dao.clearAll();preferences.draft("")}};cache.clear();mutable.value=state.value.copy(conversations=emptyList(),selectedId=null,conversation=null,newDraft="",messageVersions=emptyMap(),isLoading=false)}
