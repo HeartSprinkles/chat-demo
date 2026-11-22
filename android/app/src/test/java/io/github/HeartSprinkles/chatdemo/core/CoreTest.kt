@@ -31,6 +31,15 @@ class CoreTest {
         assertEquals(listOf("u","a","tail"),visibleMessages(selectBranch(edited,"u")).map {it.id})
         assertEquals(5,edited.messages.size)
     }
+    @Test fun thousandMessageBranchRestoresEntireOriginalPath() {
+        val nodes=(0 until 1000).map {ChatMessage(id="m$it",role=if(it%2==0) "user" else "assistant",text="message $it")}
+        val original=appendBranch(Conversation(id="large"),null,nodes)
+        val branched=appendBranch(original,"m498",listOf(ChatMessage(id="alternate",role="assistant",text="alternate reply")))
+        assertEquals(500,visibleMessages(branched).size)
+        val restored=selectBranch(branched,"m499")
+        assertEquals(nodes.map {it.id},visibleMessages(restored).map {it.id})
+        assertEquals(1001,restored.messages.size)
+    }
     @Test fun cycleDoesNotLoop() {
         val c=Conversation(rootId="a",messages=listOf(ChatMessage(id="a",role="user",selectedChildId="b"),ChatMessage(id="b",role="assistant",selectedChildId="a")))
         assertEquals(2,visibleMessages(c).size)

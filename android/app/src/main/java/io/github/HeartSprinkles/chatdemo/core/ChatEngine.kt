@@ -22,7 +22,8 @@ class ChatEngine(context:Context) {
     private val cache=mutableMapOf<String,Conversation>()
     private val saveMutex=Mutex()
     private val pending=mutableMapOf<String,Job>()
-    private val deleting=mutableSetOf<String>()
+    private val deleting=java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val latestSaves=mutableMapOf<String,Conversation>()
     private var generation:Job?=null
     private var call:Call?=null
     private var key=""
@@ -40,7 +41,7 @@ class ChatEngine(context:Context) {
     private fun publish(c:Conversation, metadata:Boolean=true) {
         cache[c.id]=c
         val s=state.value
-        val summaries=if(metadata) (s.conversations.filterNot {it.id==c.id}+c.copy(messages=emptyList())).sortedByDescending {it.updatedAt} else s.conversations
+        val summaries=if(metadata) (s.conversations.filterNot {it.id==c.id}+c.copy(messages=emptyList(),draft="")).sortedByDescending {it.updatedAt} else s.conversations
         val selected=cache[s.selectedId]
         val groups=selected?.messages?.groupBy {it.parentId}.orEmpty()
         val versions=groups.values.flatMap {siblings -> val v=siblings.map {MessageVersion(it.id,it.text,it.thinking,it.status)};siblings.map {it.id to v} }.toMap()
@@ -48,11 +49,19 @@ class ChatEngine(context:Context) {
     }
     private fun persist(c:Conversation, immediate:Boolean=false) {
         if(c.id in deleting) return
-        pending.remove(c.id)?.cancel()
+        latestSaves[c.id]=c
+        if(!immediate && pending[c.id]?.isActive==true) return
+        if(immediate) pending.remove(c.id)?.cancel()
         pending[c.id]=scope.launch {
-            if(!immediate) delay(500)
-            try { withContext(Dispatchers.IO) { saveMutex.withLock { dao.save(c) } } }
-            catch(e:Exception) { mutable.value=state.value.copy(error="Cannot save conversation: ${e.message}") }
+            var first=true
+            while(latestSaves.containsKey(c.id) && c.id !in deleting) {
+                if(!immediate || !first) delay(500)
+                first=false
+                val snapshot=latestSaves.remove(c.id) ?: break
+                try {withContext(Dispatchers.IO) {saveMutex.withLock {if(c.id !in deleting) dao.save(snapshot)}}}
+                catch(e:CancellationException) {throw e}
+                catch(e:Exception) {mutable.value=state.value.copy(error="Cannot save conversation: ${e.message}")}
+            }
         }
     }
     private fun change(id:String, metadata:Boolean=true, immediate:Boolean=false, transform:(Conversation)->Conversation) {
@@ -79,7 +88,7 @@ class ChatEngine(context:Context) {
     }
     suspend fun verifyKey(apiKey:String)=validateApiKey(apiKey)
     fun updateDraft(text:String) { command { val id=state.value.selectedId;if(id==null) {mutable.value=state.value.copy(newDraft=text);scope.launch {try {preferences.draft(text)} catch(e:Exception){mutable.value=state.value.copy(error="Cannot save draft")}}} else change(id) {it.copy(draft=text)} } }
-    fun create() { command { selectEpoch++;mutable.value=state.value.copy(selectedId=null,conversation=null,newDraft="",messageVersions=emptyMap(),error=null) } }
+    fun create() { command { selectEpoch++;mutable.value=state.value.copy(selectedId=null,conversation=null,newDraft="",messageVersions=emptyMap(),error=null);scope.launch {try {preferences.draft("")} catch(e:CancellationException) {throw e} catch(e:Exception) {mutable.value=state.value.copy(error="Cannot clear draft")} } } }
     fun select(id:String) { command {
         if(state.value.conversations.none {it.id==id}) return@command
         val epoch=++selectEpoch
@@ -97,14 +106,14 @@ class ChatEngine(context:Context) {
     fun delete(id:String) { command {
         deleting.add(id)
         if(state.value.activeConversationId==id) stop()
-        pending.remove(id)?.cancel()
+        pending.remove(id)?.cancel();latestSaves.remove(id)
         scope.launch {
             try {withContext(Dispatchers.IO) {saveMutex.withLock {dao.delete(id)}};cache.remove(id);val s=state.value;mutable.value=s.copy(conversations=s.conversations.filterNot {it.id==id},selectedId=if(s.selectedId==id)null else s.selectedId,conversation=if(s.selectedId==id)null else s.conversation);selectEpoch++}
             catch(e:Exception){mutable.value=state.value.copy(error="Cannot delete conversation: ${e.message}")}
         }
     } }
     fun clearAll() { command {
-        val ids=state.value.conversations.map {it.id}.toSet();deleting.addAll(ids);mutable.value=state.value.copy(isLoading=true);call?.cancel();pending.values.forEach {it.cancel()};pending.clear();selectEpoch++
+        val ids=state.value.conversations.map {it.id}.toSet();deleting.addAll(ids);mutable.value=state.value.copy(isLoading=true);call?.cancel();pending.values.forEach {it.cancel()};pending.clear();latestSaves.clear();selectEpoch++
         scope.launch {
             try {withContext(Dispatchers.IO) {saveMutex.withLock {dao.clearAll();preferences.draft("")}};cache.clear();mutable.value=state.value.copy(conversations=emptyList(),selectedId=null,conversation=null,newDraft="",messageVersions=emptyMap(),isLoading=false)}
             catch(e:Exception) {deleting.removeAll(ids);mutable.value=state.value.copy(isLoading=false,error="Cannot clear history: ${e.message}")}
