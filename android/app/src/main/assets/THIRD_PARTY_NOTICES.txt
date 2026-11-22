@@ -1,0 +1,32 @@
+DeepSeek Chat Demo — third-party notices
+
+Upstream application: DeepSeek chat-demo
+Copyright (c) 2026 DeepSeek. MIT License; full text is bundled in LICENSE.
+https://github.com/deepseek-ai/chat-demo
+
+AndroidX Activity, Compose, Lifecycle, Room and AndroidX Test
+Copyright The Android Open Source Project. Apache License 2.0.
+https://developer.android.com/jetpack/androidx
+https://www.apache.org/licenses/LICENSE-2.0
+
+Kotlin and kotlinx.coroutines / kotlinx.serialization
+Copyright JetBrains s.r.o. and contributors. Apache License 2.0.
+https://kotlinlang.org/
+https://github.com/Kotlin/kotlinx.coroutines
+https://github.com/Kotlin/kotlinx.serialization
+https://www.apache.org/licenses/LICENSE-2.0
+
+Markwon 4.6.2 (core, ext-tables) and commonmark-java
+Copyright Dimitry Ivanov / Markwon contributors. Apache License 2.0.
+https://github.com/noties/Markwon
+https://github.com/commonmark/commonmark-java
+https://www.apache.org/licenses/LICENSE-2.0
+
+OkHttp and Okio
+Copyright Square, Inc. and contributors. Apache License 2.0.
+https://square.github.io/okhttp/
+https://square.github.io/okio/
+https://www.apache.org/licenses/LICENSE-2.0
+
+Syntax token coloring is implemented locally. Prism4j is not bundled.
+This notice lists directly used components and does not replace their license terms.

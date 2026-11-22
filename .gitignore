@@ -9,3 +9,7 @@ build/
 .env.*
 !.env.example
 tmp/
+android/.gradle/
+android/local.properties
+*.jks
+*.keystore
