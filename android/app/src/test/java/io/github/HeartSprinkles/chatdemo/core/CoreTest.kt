@@ -9,6 +9,11 @@ import org.junit.Test
 class CoreTest {
     private fun json(value:String)=codec.parseToJsonElement(value).jsonObject
     private fun answer(text:String,status:String="complete",reason:String="end_turn",extra:List<JsonObject> = emptyList()) = projected(ChatMessage(role="assistant",status=status,stopReason=reason,blocks=listOf(json("""{"type":"text","text":"$text"}"""))+extra))
+    @Test fun malformedCredentialsAreRejectedWithoutConstructingHttpHeaders() {
+        assertTrue(isSafeApiKey("sk-example-123"))
+        assertFalse(isSafeApiKey(""));assertFalse(isSafeApiKey("sk-first\nsecond"))
+        assertFalse(isSafeApiKey("sk-钥匙"));assertFalse(isSafeApiKey("sk-space key"));assertFalse(isSafeApiKey("sk-\u0000key"))
+    }
     @Test fun framingHandlesCrLfSplitsCommentsBOMMultilineAndId() {
         val d=SseDecoder()
         assertTrue(d.push("\uFEFF: ping\r\nid: 42\r\nevent: delta\r\ndata: one\r").isEmpty())

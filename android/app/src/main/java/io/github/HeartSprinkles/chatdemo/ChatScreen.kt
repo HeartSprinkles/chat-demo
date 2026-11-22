@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
@@ -55,7 +56,7 @@ fun ChatScreen(vm: ChatViewModel, zh: Boolean) {
         Scaffold(modifier = Modifier.fillMaxSize().imePadding(), topBar = {
             TopAppBar(title = { Text(state.conversation?.title ?: "DeepSeek Chat Demo", maxLines = 1) }, navigationIcon = {
                 TextButton(onClick = { scope.launch { drawer.open() } }) { Text("☰") }
-            }, actions = { TextButton(onClick = { settings = true }) { Text(label(zh, "设置", "Settings")) } })
+            }, actions = { TextButton(modifier = Modifier.testTag("toolbar-settings"), onClick = { settings = true }) { Text(label(zh, "设置", "Settings")) } })
         }, bottomBar = {
             Surface(tonalElevation = 3.dp) {
                 Column(Modifier.navigationBarsPadding().padding(12.dp)) {

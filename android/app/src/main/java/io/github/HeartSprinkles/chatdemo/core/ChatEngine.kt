@@ -60,15 +60,24 @@ class ChatEngine(context:Context) {
                 val snapshot=latestSaves.remove(c.id) ?: break
                 try {withContext(Dispatchers.IO) {saveMutex.withLock {if(c.id !in deleting) dao.save(snapshot)}}}
                 catch(e:CancellationException) {throw e}
-                catch(e:Exception) {mutable.value=state.value.copy(error="Cannot save conversation: ${e.message}")}
+                catch(e:Exception) {
+                    // Keep the newest unsaved snapshot; never lose it to cache eviction.
+                    if(c.id !in deleting && !latestSaves.containsKey(c.id)) latestSaves[c.id]=snapshot
+                    mutable.value=state.value.copy(error="Cannot save conversation: ${e.message}")
+                    break // Retry only on the next change/navigation, not a tight failure loop.
+                }
             }
         }
+    }
+    private fun retryFailedSaves() {
+        latestSaves.values.toList().filter { pending[it.id]?.isActive!=true && it.id !in deleting }.forEach {persist(it,true)}
     }
     private fun change(id:String, metadata:Boolean=true, immediate:Boolean=false, transform:(Conversation)->Conversation) {
         val c=cache[id] ?: return;val updated=transform(c);publish(updated,metadata);persist(updated,immediate)
     }
     fun clearError() { command { mutable.value=state.value.copy(error=null) } }
     fun updateSettings(settings:Settings, apiKey:String?=null) { command {
+        if(apiKey!=null && apiKey.isNotBlank() && !isSafeApiKey(apiKey.trim())) {mutable.value=state.value.copy(error="API key contains invalid characters");return@command}
         if(settings.model !in listOf("deepseek-flash","deepseek-v4-pro")) { mutable.value=state.value.copy(error="Unsupported model");return@command }
         scope.launch {
             try {
@@ -80,7 +89,9 @@ class ChatEngine(context:Context) {
     } }
     suspend fun validateApiKey(apiKey:String):Result<List<String>> = withContext(Dispatchers.IO) {
         if(apiKey.isBlank()) return@withContext Result.failure(IllegalArgumentException("API key is required"))
-        val verify=api.verifyCall(apiKey.trim())
+        val clean=apiKey.trim()
+        if(!isSafeApiKey(clean)) return@withContext Result.failure(IllegalArgumentException("API key contains invalid characters"))
+        val verify=try {api.verifyCall(clean)} catch(e:IllegalArgumentException) {return@withContext Result.failure(IllegalArgumentException("Invalid API key"))}
         coroutineScope {
             val cancellationWatcher=launch(Dispatchers.Default) { try { awaitCancellation() } finally { verify.cancel() } }
             try { Result.success(api.verify(verify)) } catch(e:Exception) { if(!currentCoroutineContext().isActive) throw CancellationException("Key verification cancelled",e);Result.failure(e) } finally { cancellationWatcher.cancel() }
@@ -91,10 +102,11 @@ class ChatEngine(context:Context) {
     fun create() { command { selectEpoch++;mutable.value=state.value.copy(selectedId=null,conversation=null,newDraft="",messageVersions=emptyMap(),error=null);scope.launch {try {preferences.draft("")} catch(e:CancellationException) {throw e} catch(e:Exception) {mutable.value=state.value.copy(error="Cannot clear draft")} } } }
     fun select(id:String) { command {
         if(state.value.conversations.none {it.id==id}) return@command
+        retryFailedSaves()
         val epoch=++selectEpoch
         mutable.value=state.value.copy(selectedId=id,conversation=null,error=null)
         if(cache[id]!=null) publish(cache.getValue(id),false) else scope.launch {
-            try { val loaded=withContext(Dispatchers.IO) {dao.load(id)}; if(loaded!=null && epoch==selectEpoch) {cache.keys.filter {it!=state.value.activeConversationId && it!=id}.toList().forEach(cache::remove);publish(loaded,false)} }
+            try { val loaded=withContext(Dispatchers.IO) {dao.load(id)}; if(loaded!=null && epoch==selectEpoch) {cache.keys.filter {it!=state.value.activeConversationId && it!=id && !latestSaves.containsKey(it) && pending[it]?.isActive!=true}.toList().forEach(cache::remove);publish(loaded,false)} }
             catch(e:Exception) {if(epoch==selectEpoch) mutable.value=state.value.copy(error="Cannot load conversation: ${e.message}")}
         }
     } }
@@ -109,7 +121,14 @@ class ChatEngine(context:Context) {
         pending.remove(id)?.cancel();latestSaves.remove(id)
         scope.launch {
             try {withContext(Dispatchers.IO) {saveMutex.withLock {dao.delete(id)}};cache.remove(id);val s=state.value;mutable.value=s.copy(conversations=s.conversations.filterNot {it.id==id},selectedId=if(s.selectedId==id)null else s.selectedId,conversation=if(s.selectedId==id)null else s.conversation);selectEpoch++}
-            catch(e:Exception){mutable.value=state.value.copy(error="Cannot delete conversation: ${e.message}")}
+            catch(e:Exception) {
+                deleting.remove(id)
+                cache[id]?.let {saved ->
+                    val restored=if(state.value.activeConversationId==id) saved else saved.copy(messages=saved.messages.map {if(it.status=="streaming") projected(it.copy(status="cancelled")) else it})
+                    publish(restored);persist(restored,true)
+                }
+                mutable.value=state.value.copy(error="Cannot delete conversation: ${e.message}")
+            }
         }
     } }
     fun clearAll() { command {
@@ -127,7 +146,7 @@ class ChatEngine(context:Context) {
         val updated=appendBranch(c.copy(draft=""),path.lastOrNull()?.id,listOf(user,reply));publish(updated);persist(updated,true)
         generate(updated.id,reply,path,user,null)
     } }
-    private fun readyForGeneration():Boolean { if(state.value.isStreaming || state.value.selectedId in deleting) return false;if(state.value.selectedId!=null && cache[state.value.selectedId]==null) {mutable.value=state.value.copy(error="Conversation is still loading");return false};if(key.isBlank()) {mutable.value=state.value.copy(error="Set your API key in Settings first");return false};return true }
+    private fun readyForGeneration():Boolean { if(state.value.isStreaming || state.value.selectedId in deleting) return false;if(state.value.selectedId!=null && cache[state.value.selectedId]==null) {mutable.value=state.value.copy(error="Conversation is still loading");return false};if(key.isBlank()) {mutable.value=state.value.copy(error="Set your API key in Settings first");return false};if(!isSafeApiKey(key)) {mutable.value=state.value.copy(error="Stored API key is invalid; re-enter it in Settings");return false};return true }
     fun edit(messageId:String,text:String) { command {
         if(!readyForGeneration() || text.isBlank()) return@command
         val c=cache[state.value.selectedId] ?: return@command;val path=visibleMessages(c);val index=path.indexOfFirst {it.id==messageId && it.role=="user"};if(index<0)return@command
@@ -152,14 +171,20 @@ class ChatEngine(context:Context) {
         generate(c.id,reply,path.dropLast(2),user,reply)
     } }
     private fun generate(id:String,reply:ChatMessage,history:List<ChatMessage>,user:ChatMessage,prefix:ChatMessage?) {
-        val settings=if(prefix!=null) state.value.settings.copy(model=prefix.model,thinking=prefix.thinkingEnabled) else state.value.settings
+        val settings=if(prefix!=null) state.value.settings.copy(model=prefix.model,thinking=prefix.thinkingEnabled,search=prefix.searchEnabled) else state.value.settings
         val reminder=prefix?.latestReminder ?: latestReminder(settings)
-        val snapshotReply=reply.copy(model=settings.model,thinkingEnabled=settings.thinking,latestReminder=reminder)
+        val snapshotReply=reply.copy(model=settings.model,thinkingEnabled=settings.thinking,searchEnabled=settings.search,latestReminder=reminder)
         change(id,false,true) {c -> c.copy(messages=c.messages.map {if(it.id==reply.id) snapshotReply.copy(parentId=it.parentId,selectedChildId=it.selectedChildId) else it})}
         val titleAllowed=cache[id]?.manualTitle==false && history.isEmpty();val body=requestBody(settings,requestMessages(history,user,prefix,settings.thinking,reminder),titleAllowed)
         val accumulator=ReplyAccumulator(snapshotReply);mutable.value=state.value.copy(activeConversationId=id,error=null)
         val requestKey=key
-        val currentCall=api.messageCall(requestKey,body);call=currentCall
+        val currentCall=try {api.messageCall(requestKey,body)} catch(e:IllegalArgumentException) {
+            val failed=accumulator.settle("error")
+            change(id,false,true) {c -> c.copy(messages=c.messages.map {if(it.id==reply.id) failed.copy(parentId=it.parentId,selectedChildId=it.selectedChildId) else it})}
+            mutable.value=state.value.copy(activeConversationId=null,error="Invalid message request; check API key and settings")
+            return
+        }
+        call=currentCall
         generation=scope.launch {
             var status="complete"
             try { withContext(Dispatchers.IO) {

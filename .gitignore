@@ -13,3 +13,4 @@ android/.gradle/
 android/local.properties
 *.jks
 *.keystore
+ci-results-*/

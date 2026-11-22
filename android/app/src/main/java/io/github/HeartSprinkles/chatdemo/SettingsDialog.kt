@@ -6,6 +6,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -22,7 +23,7 @@ internal fun SettingsDialog(vm: ChatViewModel, zh: Boolean, dismiss: () -> Unit)
     var result by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     var about by remember { mutableStateOf(false) }
-    AlertDialog(onDismissRequest = { if (!verifying) dismiss() }, title = { Text(label(zh, "设置", "Settings")) }, text = {
+    AlertDialog(modifier = Modifier.testTag("settings-dialog"), onDismissRequest = { if (!verifying) dismiss() }, title = { Text(label(zh, "设置", "Settings")) }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(label(zh, "语言", "Language"))
             Row { listOf("zh" to "中文", "en" to "English").forEach { (value, title) -> FilterChip(selected = language == value, onClick = { language = value }, label = { Text(title) }, modifier = Modifier.padding(end = 8.dp)) } }
@@ -38,7 +39,7 @@ internal fun SettingsDialog(vm: ChatViewModel, zh: Boolean, dismiss: () -> Unit)
             TextButton(onClick = { about = true }) { Text(label(zh, "关于与开源许可", "About & open-source licenses")) }
         }
     }, confirmButton = {
-        TextButton(enabled = !verifying, onClick = {
+        TextButton(modifier = Modifier.testTag("settings-save"), enabled = !verifying, onClick = {
             if (key.isBlank()) {
                                 vm.engine.updateSettings(state.settings.copy(locale = language, theme = theme))
                 dismiss()

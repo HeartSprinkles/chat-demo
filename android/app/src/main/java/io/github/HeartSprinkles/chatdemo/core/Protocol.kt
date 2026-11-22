@@ -41,6 +41,8 @@ class SseDecoder {
         return null
     }
 }
+internal fun isSafeApiKey(key:String):Boolean = key.isNotBlank() && key.all {it.code in 33..126}
+
 class ApiException(val kind: String, message: String, val status: Int? = null): IOException(message)
 class ReplyAccumulator(initial: ChatMessage) {
     var message = initial.copy(status="streaming"); private set
