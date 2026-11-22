@@ -104,15 +104,16 @@ class ChatEngine(context:Context) {
         }
     } }
     fun clearAll() { command {
-        val ids=state.value.conversations.map {it.id}.toSet();deleting.addAll(ids);call?.cancel();pending.values.forEach {it.cancel()};pending.clear();selectEpoch++
+        val ids=state.value.conversations.map {it.id}.toSet();deleting.addAll(ids);mutable.value=state.value.copy(isLoading=true);call?.cancel();pending.values.forEach {it.cancel()};pending.clear();selectEpoch++
         scope.launch {
-            try {withContext(Dispatchers.IO) {saveMutex.withLock {dao.clearAll();preferences.draft("")}};cache.clear();mutable.value=state.value.copy(conversations=emptyList(),selectedId=null,conversation=null,newDraft="",messageVersions=emptyMap())}
-            catch(e:Exception) {deleting.removeAll(ids);mutable.value=state.value.copy(error="Cannot clear history: ${e.message}")}
+            try {withContext(Dispatchers.IO) {saveMutex.withLock {dao.clearAll();preferences.draft("")}};cache.clear();mutable.value=state.value.copy(conversations=emptyList(),selectedId=null,conversation=null,newDraft="",messageVersions=emptyMap(),isLoading=false)}
+            catch(e:Exception) {deleting.removeAll(ids);mutable.value=state.value.copy(isLoading=false,error="Cannot clear history: ${e.message}")}
         }
     } }
     fun send(text:String=state.value.draft) { command {
         if(!readyForGeneration() || text.isBlank()) return@command
         val c=state.value.selectedId?.let(cache::get) ?: Conversation(draft=state.value.newDraft).also {cache[it.id]=it;mutable.value=state.value.copy(selectedId=it.id,newDraft="")}
+        scope.launch {try {preferences.draft("")} catch(e:Exception) {mutable.value=state.value.copy(error="Cannot clear sent draft")}}
         val path=visibleMessages(c); val user=ChatMessage(role="user",text=text.trim());val reply=ChatMessage(role="assistant",status="streaming")
         val updated=appendBranch(c.copy(draft=""),path.lastOrNull()?.id,listOf(user,reply));publish(updated);persist(updated,true)
         generate(updated.id,reply,path,user,null)
@@ -142,9 +143,14 @@ class ChatEngine(context:Context) {
         generate(c.id,reply,path.dropLast(2),user,reply)
     } }
     private fun generate(id:String,reply:ChatMessage,history:List<ChatMessage>,user:ChatMessage,prefix:ChatMessage?) {
-        val settings=state.value.settings;val titleAllowed=cache[id]?.manualTitle==false && history.isEmpty();val body=requestBody(settings,requestMessages(history,user,prefix,settings.thinking),titleAllowed)
-        val accumulator=ReplyAccumulator(reply);mutable.value=state.value.copy(activeConversationId=id,error=null)
-        val currentCall=api.messageCall(key,body);call=currentCall
+        val settings=if(prefix!=null) state.value.settings.copy(model=prefix.model,thinking=prefix.thinkingEnabled) else state.value.settings
+        val reminder=prefix?.latestReminder ?: latestReminder(settings)
+        val snapshotReply=reply.copy(model=settings.model,thinkingEnabled=settings.thinking,latestReminder=reminder)
+        change(id,false,true) {c -> c.copy(messages=c.messages.map {if(it.id==reply.id) snapshotReply.copy(parentId=it.parentId,selectedChildId=it.selectedChildId) else it})}
+        val titleAllowed=cache[id]?.manualTitle==false && history.isEmpty();val body=requestBody(settings,requestMessages(history,user,prefix,settings.thinking,reminder),titleAllowed)
+        val accumulator=ReplyAccumulator(snapshotReply);mutable.value=state.value.copy(activeConversationId=id,error=null)
+        val requestKey=key
+        val currentCall=api.messageCall(requestKey,body);call=currentCall
         generation=scope.launch {
             var status="complete"
             try { withContext(Dispatchers.IO) {
@@ -161,7 +167,7 @@ class ChatEngine(context:Context) {
                     }
                 }
             } }
-            catch(e:Exception) {status=if(currentCall.isCanceled() || e is CancellationException) "cancelled" else "error";if(status=="error") mutable.value=state.value.copy(error=e.message?.replace(key,"[redacted]") ?: "Network error")}
+            catch(e:Exception) {status=if(currentCall.isCanceled() || e is CancellationException) "cancelled" else "error";if(status=="error") mutable.value=state.value.copy(error=e.message?.replace(requestKey,"[redacted]") ?: "Network error")}
             finally {
                 if(cache.containsKey(id) && id !in deleting) { val settled=accumulator.settle(status);change(id,metadata=true,immediate=true) {c -> c.copy(updatedAt=System.currentTimeMillis(),title=if(titleAllowed && !c.manualTitle) accumulator.title ?: c.title else c.title,messages=c.messages.map {if(it.id==reply.id) settled.copy(parentId=it.parentId,selectedChildId=it.selectedChildId) else it})} }
                 if(call===currentCall) {call=null;generation=null;mutable.value=state.value.copy(activeConversationId=null)}

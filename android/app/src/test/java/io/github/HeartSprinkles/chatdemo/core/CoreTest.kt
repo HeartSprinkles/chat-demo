@@ -18,7 +18,7 @@ class CoreTest {
     }
     @Test fun loneCrAndPersistentId() {
         val d=SseDecoder();assertEquals(1,d.push("id: a\rdata: x\r\rdata: y\r").size)
-        assertEquals(SseFrame("message","y","a"),d.push("\r").single())
+        assertEquals(SseFrame("message","y","a"),d.push("\rx").single())
         assertTrue(d.end().isEmpty())
     }
     @Test fun branchesRetainOriginalDescendantsAndRestoreSelectedPath() {

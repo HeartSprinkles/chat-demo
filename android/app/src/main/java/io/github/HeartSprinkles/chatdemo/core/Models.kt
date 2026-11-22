@@ -57,19 +57,22 @@ fun assistantContext(m: ChatMessage, prefix: Boolean = false, thinking: Boolean 
     val out = mutableListOf<JsonObject>(); var adjacent = false
     for (b in m.blocks) {
         when (b.str("type")) {
-            "text" -> { val text = b.str("text"); if (adjacent && out.isNotEmpty()) { val old = out.removeAt(out.lastIndex); out += buildJsonObject { put("type","text"); put("text",old.str("text")+text) } } else if (text.isNotEmpty()) out += buildJsonObject { put("type","text"); put("text", (if (out.lastOrNull()?.str("type") == "text") "\n\n" else "")+text) }; adjacent = true }
+            "text" -> { val text = b.str("text"); if(text.isEmpty()) continue; if (adjacent && out.isNotEmpty()) { val old = out.removeAt(out.lastIndex); out += buildJsonObject { put("type","text"); put("text",old.str("text")+text) } } else if (text.isNotEmpty()) out += buildJsonObject { put("type","text"); put("text", (if (out.lastOrNull()?.str("type") == "text") "\n\n" else "")+text) }; adjacent = true }
             "thinking" -> { if (prefix && b.str("thinking").isBlank()) continue; adjacent = false; if (prefix && thinking) out += buildJsonObject { put("type","thinking"); put("thinking",b.str("thinking")); put("signature",b.str("signature")) } }
             else -> { adjacent = false; if (b.str("kind") == "read_link" && b.str("id").ifEmpty { b.str("tool_use_id") } !in unsigned) { if (b.str("type") == "server_tool_use") out += JsonObject(b.filterKeys { it != "caller" }) else if (b.str("type") == "web_fetch_tool_result") out += b } }
         }
     }
     return JsonArray(out)
 }
-fun requestMessages(history: List<ChatMessage>, question: ChatMessage, prefix: ChatMessage? = null, thinking: Boolean = false): JsonArray {
+fun requestMessages(history: List<ChatMessage>, question: ChatMessage, prefix: ChatMessage? = null, thinking: Boolean = false, latestReminder: String? = prefix?.latestReminder): JsonArray {
     val out = mutableListOf<JsonObject>()
+    var previousReminder:String?=null
+    fun reminder(value:String?) { if(!value.isNullOrBlank() && value!=previousReminder) {out += buildJsonObject {put("role","latest_reminder");put("content",value)};previousReminder=value} }
     fun user(m:ChatMessage) = buildJsonObject { put("role","user"); put("content",m.text) }
     fun assistant(m:ChatMessage,p:Boolean=false) = buildJsonObject { put("role","assistant"); put("content",assistantContext(m,p,thinking)) }
     var i = 0
-    while (i+1 < history.size) { val u=history[i]; val a=history[i+1]; if (u.role=="user" && u.text.isNotBlank() && a.role=="assistant" && a.status in listOf("complete","cancelled") && a.stopReason != "refusal" && a.text.isNotEmpty()) { out += user(u); out += assistant(a); i+=2 } else i++ }
+    while (i+1 < history.size) { val u=history[i]; val a=history[i+1]; if (u.role=="user" && u.text.isNotBlank() && a.role=="assistant" && a.status in listOf("complete","cancelled") && a.stopReason != "refusal" && a.text.isNotEmpty() && a.blocks.none {it.str("type")=="text" && (it["isTemplate"] as? JsonPrimitive)?.booleanOrNull==true}) { reminder(a.latestReminder); out += user(u); out += assistant(a); i+=2 } else i++ }
+    reminder(latestReminder)
     out += user(question)
     if (prefix != null && prefix.prefix && assistantContext(prefix,true,thinking).any { (it as JsonObject).str("text").isNotBlank() || it.str("thinking").isNotBlank() }) out += assistant(prefix,true)
     return JsonArray(out)

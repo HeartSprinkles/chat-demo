@@ -26,6 +26,7 @@ fun ChatScreen(vm: ChatViewModel, zh: Boolean) {
     var settings by remember { mutableStateOf(false) }
     var rename by remember { mutableStateOf<Conversation?>(null) }
     var delete by remember { mutableStateOf<Conversation?>(null) }
+    var clearAll by remember { mutableStateOf(false) }
     var edit by remember { mutableStateOf<ChatMessage?>(null) }
     val list = rememberLazyListState()
     // Only follow the tail if already at the tail. Never move a reader to new tokens.
@@ -47,6 +48,7 @@ fun ChatScreen(vm: ChatViewModel, zh: Boolean) {
                         })
                 }
             }
+            TextButton(onClick = { clearAll = true }, modifier = Modifier.padding(horizontal = 16.dp), enabled = state.conversations.isNotEmpty()) { Text(label(zh, "清空全部对话", "Clear all conversations")) }
             TextButton(onClick = { settings = true; scope.launch { drawer.close() } }, modifier = Modifier.padding(16.dp)) { Text(label(zh, "设置", "Settings")) }
         }
     }) {
@@ -94,6 +96,7 @@ fun ChatScreen(vm: ChatViewModel, zh: Boolean) {
         }
     }
     if (settings) SettingsDialog(vm, zh) { settings = false }
+    if (clearAll) AlertDialog(onDismissRequest = { clearAll = false }, title = { Text(label(zh, "清空全部对话？", "Clear all conversations?")) }, text = { Text(label(zh, "全部对话和草稿将被永久删除；当前生成会停止。API 密钥和设置将保留。", "All conversations and drafts will be permanently deleted and generation stopped. Your API key and settings will remain.")) }, confirmButton = { TextButton(onClick = { engine.clearAll(); clearAll = false; scope.launch { drawer.close() } }) { Text(label(zh, "确认清空", "Confirm clear all")) } }, dismissButton = { TextButton(onClick = { clearAll = false }) { Text(label(zh, "取消", "Cancel")) } })
     rename?.let { conversation -> TextEntryDialog(label(zh, "重命名对话", "Rename conversation"), conversation.title, zh, onDismiss = { rename = null }) { engine.rename(conversation.id, it); rename = null } }
     edit?.let { message -> TextEntryDialog(label(zh, "编辑并生成分支", "Edit and branch"), message.text, zh, onDismiss = { edit = null }) { engine.edit(message.id, it); edit = null } }
     delete?.let { conversation -> AlertDialog(onDismissRequest = { delete = null }, title = { Text(label(zh, "删除对话？", "Delete conversation?")) }, text = { Text(label(zh, "此操作会永久删除“${conversation.title}”。", "Permanently delete “${conversation.title}”?")) }, confirmButton = { TextButton(onClick = { engine.delete(conversation.id); delete = null }) { Text(label(zh, "删除", "Delete")) } }, dismissButton = { TextButton(onClick = { delete = null }) { Text(label(zh, "取消", "Cancel")) } }) }
@@ -121,6 +124,7 @@ internal fun MessageCard(message: ChatMessage, zh: Boolean, idle: Boolean, onEdi
             val long = message.text.length > 4000
             MarkdownText(if (long && !expanded) message.text.take(3500) + "\n\n…" else message.text, message.status == "streaming")
             CodeCopyButtons(message.text, zh)
+            if (message.citations.isNotEmpty()) CitationLinks(message.citations.joinToString("\n"), zh)
             if (long) TextButton(onClick = { expanded = !expanded }) { Text(label(zh, if (expanded) "收起" else "展开完整消息", if (expanded) "Collapse" else "Show full message")) }
             message.tools.forEach { tool ->
                 var open by remember(tool.id) { mutableStateOf(false) }
