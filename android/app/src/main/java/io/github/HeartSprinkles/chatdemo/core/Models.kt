@@ -4,6 +4,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 import java.util.UUID
 
+/** ConcurrentHashMap sets reject null; a welcome screen has no conversation yet. */
+internal fun containsConversation(ids:Set<String>, id:String?):Boolean = id!=null && ids.contains(id)
 internal fun newId(): String = UUID.randomUUID().toString()
 internal val codec = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 internal fun JsonObject.str(key: String): String = (this[key] as? JsonPrimitive)?.contentOrNull.orEmpty()

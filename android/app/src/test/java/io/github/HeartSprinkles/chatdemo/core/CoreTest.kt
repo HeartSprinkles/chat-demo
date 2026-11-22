@@ -9,6 +9,13 @@ import org.junit.Test
 class CoreTest {
     private fun json(value:String)=codec.parseToJsonElement(value).jsonObject
     private fun answer(text:String,status:String="complete",reason:String="end_turn",extra:List<JsonObject> = emptyList()) = projected(ChatMessage(role="assistant",status=status,stopReason=reason,blocks=listOf(json("""{"type":"text","text":"$text"}"""))+extra))
+    @Test fun welcomeConversationMembershipNeverPassesNullToConcurrentSet() {
+        val deleting=java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+        deleting.add("deleted")
+        assertFalse(containsConversation(deleting,null))
+        assertFalse(containsConversation(deleting,"active"))
+        assertTrue(containsConversation(deleting,"deleted"))
+    }
     @Test fun malformedCredentialsAreRejectedWithoutConstructingHttpHeaders() {
         assertTrue(isSafeApiKey("sk-example-123"))
         assertFalse(isSafeApiKey(""));assertFalse(isSafeApiKey("sk-first\nsecond"))

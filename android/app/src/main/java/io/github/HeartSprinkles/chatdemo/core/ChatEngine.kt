@@ -10,13 +10,12 @@ import kotlinx.serialization.decodeFromString
 import okhttp3.Call
 
 /** Main-thread command surface; blocking networking and Room operations always run on IO. */
-class ChatEngine(context:Context) {
+class ChatEngine(context:Context, private val api:DeepSeekClient = DeepSeekClient()) {
     private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
     private val db=ChatDatabase.open(context.applicationContext)
     private val dao=db.dao()
     private val secure=SecureKey(context.applicationContext)
     private val preferences=CorePreferences(context.applicationContext)
-    private val api=DeepSeekClient()
     private val mutable=MutableStateFlow(AppState())
     val state:StateFlow<AppState> = mutable.asStateFlow()
     private val cache=mutableMapOf<String,Conversation>()
@@ -160,7 +159,7 @@ class ChatEngine(context:Context) {
         val updated=appendBranch(c.copy(draft=""),path.lastOrNull()?.id,listOf(user,reply));publish(updated);persist(updated,true)
         generate(updated.id,reply,path,user,null)
     } }
-    private fun readyForGeneration():Boolean { if(state.value.isStreaming || state.value.selectedId in deleting) return false;if(state.value.selectedId!=null && cache[state.value.selectedId]==null) {mutable.value=state.value.copy(error="Conversation is still loading");return false};if(key.isBlank()) {mutable.value=state.value.copy(error="Set your API key in Settings first");return false};if(!isSafeApiKey(key)) {mutable.value=state.value.copy(error="Stored API key is invalid; re-enter it in Settings");return false};return true }
+    private fun readyForGeneration():Boolean { if(state.value.isStreaming || containsConversation(deleting,state.value.selectedId)) return false;if(state.value.selectedId!=null && cache[state.value.selectedId]==null) {mutable.value=state.value.copy(error="Conversation is still loading");return false};if(key.isBlank()) {mutable.value=state.value.copy(error="Set your API key in Settings first");return false};if(!isSafeApiKey(key)) {mutable.value=state.value.copy(error="Stored API key is invalid; re-enter it in Settings");return false};return true }
     fun edit(messageId:String,text:String) { command {
         if(!readyForGeneration() || text.isBlank()) return@command
         val c=cache[state.value.selectedId] ?: return@command;val path=visibleMessages(c);val index=path.indexOfFirst {it.id==messageId && it.role=="user"};if(index<0)return@command

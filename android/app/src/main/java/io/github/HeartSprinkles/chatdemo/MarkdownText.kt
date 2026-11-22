@@ -7,6 +7,7 @@ import android.util.LruCache
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
@@ -48,14 +49,24 @@ internal fun MarkdownText(text: String, streaming: Boolean) {
         if (streaming) while (true) { renderedText = currentText; delay(120) }
     }
     LaunchedEffect(text, streaming) { if (!streaming) renderedText = text }
-    var parsed by remember(renderer) { mutableStateOf<android.text.Spanned?>(null) }
+    var parsed by remember(renderer, renderedText) { mutableStateOf<android.text.Spanned?>(null) }
     LaunchedEffect(renderedText, renderer) {
-        parsed = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { renderer.render(renderedText) }
+        parsed = try {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { renderer.render(renderedText) }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            android.text.SpannableStringBuilder(renderedText)
+        }
     }
     val color = MaterialTheme.colorScheme.onSurface.toArgb()
-    AndroidView(factory = { TextView(it).apply { textSize = 16f; setTextIsSelectable(true); setPadding(0, 8, 0, 8) } }, update = { view ->
+    AndroidView(modifier = Modifier.testTag(if (parsed == null) "markdown-loading" else "markdown-ready"), factory = { TextView(it).apply { textSize = 16f; setTextIsSelectable(true); setPadding(0, 8, 0, 8) } }, update = { view ->
         view.setTextColor(color)
-        parsed?.let { content -> if (view.tag !== content) { renderer.markwon.setParsedMarkdown(view, content); view.tag = content } }
+        parsed?.let { content -> if (view.tag !== content) {
+            try { renderer.markwon.setParsedMarkdown(view, content) }
+            catch (_: Exception) { view.text = content.toString() }
+            view.tag = content
+        } }
     })
 }
 

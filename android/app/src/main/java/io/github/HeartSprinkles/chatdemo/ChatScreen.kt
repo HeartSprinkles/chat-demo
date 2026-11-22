@@ -71,10 +71,10 @@ fun ChatScreen(vm: ChatViewModel, zh: Boolean) {
                         FilterChip(selected = state.settings.search, onClick = { engine.updateSettings(state.settings.copy(search = !state.settings.search)) }, label = { Text(label(zh, "搜索", "Search")) })
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(value = state.draft, onValueChange = engine::updateDraft, modifier = Modifier.weight(1f), maxLines = 5,
+                        OutlinedTextField(value = state.draft, onValueChange = engine::updateDraft, modifier = Modifier.weight(1f).testTag("chat-draft"), maxLines = 5,
                             placeholder = { Text(label(zh, "输入消息…", "Message…")) })
                         if (state.isStreaming) Button(onClick = engine::stop) { Text(label(zh, "停止", "Stop")) }
-                        else Button(onClick = { engine.send() }, enabled = state.draft.isNotBlank() && !state.isLoading && state.activeConversationId == null && state.settings.hasApiKey) { Text(label(zh, "发送", "Send")) }
+                        else Button(modifier = Modifier.testTag("chat-send"), onClick = { engine.send() }, enabled = state.draft.isNotBlank() && !state.isLoading && state.activeConversationId == null && state.settings.hasApiKey) { Text(label(zh, "发送", "Send")) }
                     }
                     if (!state.settings.hasApiKey) TextButton(onClick = { settings = true }) { Text(label(zh, "先在设置中添加 API 密钥", "Add an API key in Settings first")) }
                     if (state.activeConversationId != null && !state.isStreaming) Text(label(zh, "另一对话正在生成", "Another conversation is generating"), style = MaterialTheme.typography.labelSmall)

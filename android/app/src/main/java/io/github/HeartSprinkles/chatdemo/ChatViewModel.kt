@@ -10,8 +10,7 @@ import kotlinx.coroutines.flow.SharingStarted
 
 data class UiPreferences(val language: String = "zh", val theme: String = "system")
 
-class ChatViewModel(application: Application) : AndroidViewModel(application) {
-    val engine = ChatEngine(application)
+class ChatViewModel @JvmOverloads constructor(application: Application, val engine: ChatEngine = ChatEngine(application)) : AndroidViewModel(application) {
     val state = engine.state
     val preferences = state.map { value ->
         UiPreferences(if (value.settings.locale == "system") {
